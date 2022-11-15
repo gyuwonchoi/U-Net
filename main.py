@@ -16,19 +16,23 @@ from utils  import save_checkpoint, get_dir_name, get_data, get_file_name, get_i
 from torch.utils.tensorboard import SummaryWriter
 from torchsummary import summary
 
-def pixel_accuray(output: torch.Tensor, target: torch.Tensor):
-    pixel_accuray = 0.0
-    
+def pixel_accuray(output, target):
     with torch.no_grad():
-        # target = F.softmax(target, dim=1)
-        # target = torch.argmax(target, dim=1)
+        # output_ = F.softmax(output)
+        # output_ = torch.argmax(output_) 
+
+        correct = (output == target).int()
+        accuracy = float(correct.sum()) / float(correct.numel()) # https://github.com/ddamddi/UNet-pytorch/blob/bfb1c47147ddeb8a85b3b50a4af06b3a2082d933/metrics.py#L7
         
-        # output = F.softmax(target, dim=1)
-        output_ = torch.argmax(output, dim=1)
+    return accuracy 
+
+def pixel_accuray(output: torch.Tensor, target: torch.Tensor):
+    with torch.no_grad():
+        output_ = F.softmax(output, dim=1)
+        output_ = torch.argmax(output_, dim=1) # check 
 
         correct = (output_ == target).int()
-        accuracy = float(correct.sum()) / float(correct.numel()) # https://github.com/ddamddi/UNet-pytorch/blob/bfb1c47147ddeb8a85b3b50a4af06b3a2082d933/metrics.py#L7
-        print(accuracy, float(correct.sum()), float(correct.numel()) )
+        accuracy = float(correct.sum()) / float(correct.numel()) 
         
     return accuracy 
 
@@ -87,10 +91,10 @@ def train(train, valid):
         lr = checkpoint['lr']
         
     optimizer = optim.SGD(model.parameters(), lr= lr, weight_decay= 0.0001, momentum=0.99)
-    criterion = nn.CrossEntropyLoss().to(device)
+    criterion = nn.CrossEntropyLoss()
 
     scheduler = optim.lr_scheduler.StepLR(optimizer=optimizer,
-                                          step_size=100,
+                                          step_size=200,
                                           gamma=0.1)
     
     writer = SummaryWriter(tb_pth_train) 
@@ -101,34 +105,45 @@ def train(train, valid):
         running_loss = 0.0
         correct = 0.0
         total = 0.0
-        accuracy = 0.0
-        
+                
         losses = AverageMeter()
+        pixel_acc = AverageMeter()
         for i, (img, target) in enumerate(train):
-            # target = target - (target == 255).int() * 255 # 255 ?
-
+            # boundary(255) -> background(0)
+            # ***** Be aware your image does not mark boudaries!! ******
+            # backgroud(0), object(1-20)
+            target = target - (target == 255).int() * 255
+            target= target.long()
+            
             optimizer.zero_grad() 
-                        
-            img, target = img.to(device), target.to(device)
-            output = model(img)
-            # output masking
 
-            target = torch.argmax(target, dim=1)
+            img, target = img.to(device), target.to(device)
+            output = model(img) # output ranges -1 ~ 1
+            
+            target = torch.squeeze(target, dim=1)
+            # target = target.view([batch_num, 388, 388])
+            
+            # channel-wise one-hot encoding --> output?
+            # channel-wise summation --> output?
+            
+            # output = torch.sum(output, dim=1)
             
             loss = criterion(output, target)
-            
             losses.update(loss.item())
 
             loss.backward()
             optimizer.step() 
             
-            accuracy = pixel_accuray(output, target)
+            # print(output.size(), target.size())
             
-            #print(f'[{i + 1}], train loss: {(losses.avg):.3f}, train accuracy: {(100.0 * accuracy):.2f}%,' , end=' ') 
+            pixel_acc.update(pixel_accuray(output, target))   # Does this really right?
+            
+            if i % 50 == 0: 
+                print(f'======iteration: [{i}], train loss: {(losses.avg):.3f}, train accuracy: {(100.0 * pixel_accuray(output, target)):.2f}%,======') 
         
-        print(f'[{epoch + 1} / {epoch_num}], train loss: {(losses.avg):.3f}, train accuracy: {(100.0 * accuracy):.2f}%')     
+        print(f'[{epoch + 1} / {epoch_num}], train loss: {(losses.avg):.3f}, train accuracy: {(100.0 * pixel_acc.avg):.2f}%')     
         writer.add_scalar("Loss/train", losses.avg, epoch + 1)
-        writer.add_scalar("Accuracy/train", 100.0 * accuracy)
+        writer.add_scalar("Accuracy/train", 100.0 * pixel_acc.avg)
 
         scheduler.step() 
     writer.close()
