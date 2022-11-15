@@ -19,10 +19,12 @@ def get_img_size():
     
     for i, (img, target) in enumerate(dataloader):
         # N C H W
-        print(img.shape) # 1 3 H W
+        # print(target.shape, img.shape) # 1 3 H W
         
         h.append(img.size(2))
         w.append(img.size(3))
+        
+        print(target)
     
     w = sorted(w)
     h = sorted(h)
@@ -59,12 +61,16 @@ def get_data(mode):
     arg = parser.parse_args()
 
     batch_size = arg.mini_batch 
-    
-    # (500 + 174) / 2 = 337 ==> 400 
+
     data_transform = transforms.Compose([transforms.Resize(size= (572, 572)),
                                           transforms.ToTensor()])   
     target_transform = transforms.Compose([transforms.Resize(size= (388, 388)),
-                                        transforms.ToTensor()])  
+                                           transforms.PILToTensor()
+                                           ])  
+    
+    target_transform_ = transforms.Compose([transforms.Resize(size= (388, 388)),
+                                           transforms.ToTensor()
+                                        ])  
     
     if(mode=='train'):
         trainset = torchvision.datasets.VOCSegmentation(root='./data', 
@@ -93,7 +99,8 @@ def get_data(mode):
                                         image_set= 'test', 
                                         year='2011',
                                         download=False,
-                                        transforms = data_transform
+                                        transform = data_transform,
+                                        target_transform=target_transform
                                         )  
         
         dataloader = torch.utils.data.DataLoader(testset, batch_size = batch_size, shuffle=False) 
@@ -156,3 +163,6 @@ class AverageMeter():
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+        
+if __name__=="__main__":
+    get_img_size()
