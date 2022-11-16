@@ -63,7 +63,8 @@ def get_data(mode):
     batch_size = arg.mini_batch 
 
     data_transform = transforms.Compose([transforms.Resize(size= (572, 572)),
-                                          transforms.ToTensor()])   
+                                          transforms.ToTensor()])               # add image normalization if need 
+    
     target_transform = transforms.Compose([transforms.Resize(size= (388, 388)),
                                            transforms.PILToTensor()
                                            ])  
