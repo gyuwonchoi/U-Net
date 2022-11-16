@@ -18,10 +18,10 @@ from torchsummary import summary
 
 def pixel_accuray(output, target):
     with torch.no_grad():
-        # output_ = F.softmax(output)
-        # output_ = torch.argmax(output_) 
+        output_ = F.softmax(output)
+        output_ = torch.argmax(output_) 
 
-        correct = (output == target).int()
+        correct = (output_ == target).int()
         accuracy = float(correct.sum()) / float(correct.numel()) # https://github.com/ddamddi/UNet-pytorch/blob/bfb1c47147ddeb8a85b3b50a4af06b3a2082d933/metrics.py#L7
         
     return accuracy 
@@ -109,32 +109,24 @@ def train(train, valid):
         losses = AverageMeter()
         pixel_acc = AverageMeter()
         for i, (img, target) in enumerate(train):
-            # boundary(255) -> background(0)
-            # ***** Be aware your image does not mark boudaries!! ******
-            # backgroud(0), object(1-20)
-            target = target - (target == 255).int() * 255
-            target= target.long()
             
+            # ***** Be aware your image does not mark boudaries!! ******
+            # boundary(255) -> background(0)
+            # backgroud(0), object(1-20)
+            target = target - (target == 255).long() * 255
+
             optimizer.zero_grad() 
 
             img, target = img.to(device), target.to(device)
             output = model(img) # output ranges -1 ~ 1
             
             target = torch.squeeze(target, dim=1)
-            # target = target.view([batch_num, 388, 388])
-            
-            # channel-wise one-hot encoding --> output?
-            # channel-wise summation --> output?
-            
-            # output = torch.sum(output, dim=1)
-            
-            loss = criterion(output, target)
+
+            loss = criterion(output, target) # float, long , one-hot coding for target?
             losses.update(loss.item())
 
             loss.backward()
             optimizer.step() 
-            
-            # print(output.size(), target.size())
             
             pixel_acc.update(pixel_accuray(output, target))   # Does this really right?
             
