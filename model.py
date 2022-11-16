@@ -77,6 +77,7 @@ class Up(nn.Module):
         return x
     
     # https://github.com/ddamddi/UNet-pytorch/blob/bfb1c47147ddeb8a85b3b50a4af06b3a2082d933/model/ops.py#L55
+    # revise by myself
     
     def _concat(self, hres, x):
         _, _, w, h = x.size()
@@ -111,7 +112,10 @@ class UNet(nn.Module):
         self.layer8 = Up(256)
         self.layer9 = Up(128)
         
-        self.final = nn.Conv2d(64, 21,  1,  1)
+        self.final = nn.Sequential(
+                        nn.Conv2d(64, 21,  1,  1),
+                        nn.BatchNorm2d(21),
+                        nn.Sigmoid()) 
 
     def forward(self, x):
         
