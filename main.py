@@ -27,8 +27,36 @@ def pixel_accuray(output: torch.Tensor, target: torch.Tensor): # https://github.
         
     return accuracy 
 
-def meanIU(output, target):
-    print("start meanIU test")
+def meanIU(output: torch.Tensor, target: torch.Tensor):
+    with torch.no_grad():  
+        output_ = F.softmax(output, dim=1)
+        output_ = torch.argmax(output_, dim=1) # check 
+        
+        batch = output.size(0)
+
+        IoU = 0.0
+        
+        for i in range(0, 21): # 0-20
+            label = torch.ones((batch, 388, 388), dtype = torch.long).to(device)
+            label = label * i
+          
+            output_u = (output_ == label).int()
+            # output_inter = output_u * i 
+            
+            target_u = (target == label).int()
+            # target_inter = target_u * i 
+            
+            intersection = (target_u * output_u).int()  # output_ == target == label , except zero , count True 
+
+            region = output_u.sum() + target_u.sum() - intersection.sum()
+            
+            if region ==0:
+                continue
+            else:
+                IoU += intersection.sum() / (output_u.sum() + target_u.sum() - intersection.sum()) # check : -4.8
+          
+        meanIoU = IoU/21.0
+    return meanIoU
 
 def validate(model_, validloader, tb_pth_valid, epoch, batch_num_val, lr_):
     writer = SummaryWriter(tb_pth_valid)  
@@ -44,12 +72,13 @@ def validate(model_, validloader, tb_pth_valid, epoch, batch_num_val, lr_):
     writer = SummaryWriter(tb_pth_valid) 
         
     losses = AverageMeter()
-    pixel_acc = AverageMeter()    
+    pixel_acc = AverageMeter()   
+    meanIoU = AverageMeter() 
     infer_time = AverageMeter()
 
     starter.record()
     with torch.no_grad():   
-        model.eval()              
+        # model.eval()              
         for j, (img, target) in enumerate(validloader):
             target = target - (target == 255).long() * 255
             img, target = img.to(device), target.to(device)
@@ -62,8 +91,9 @@ def validate(model_, validloader, tb_pth_valid, epoch, batch_num_val, lr_):
             losses.update(loss.item())
         
             pixel_acc.update(pixel_accuray(pred, target))
+            meanIoU.update(meanIU(pred, target))
             
-        print(f'valid loss: {(losses.avg):.3f}, valid accuracy: {(100.0 * pixel_acc.avg):.2f}%')     
+        print(f'valid loss: {(losses.avg):.3f}, valid accuracy: {(100.0 * pixel_acc.avg):.2f}% mIoU: {(meanIoU.avg):.2f}')     
     ender.record()
     torch.cuda.synchronize()
     infreTime = starter.elapsed_time(ender)
@@ -71,6 +101,7 @@ def validate(model_, validloader, tb_pth_valid, epoch, batch_num_val, lr_):
    
     writer.add_scalar("Loss/valid", losses.avg, epoch + 1)
     writer.add_scalar("Accuracy/valid", 100.0 * pixel_acc.avg, epoch+1) 
+    writer.add_scalar("meanIoU/valid", meanIoU.avg, epoch+1) 
     writer.add_scalar("InferTime/valid", infer_time.avg, epoch+1) 
     
     writer.close()
@@ -111,6 +142,7 @@ def train(train, valid):
     
         losses = AverageMeter()
         pixel_acc = AverageMeter()
+        meanIoU = AverageMeter()
         infer_time = AverageMeter()
         for i, (img, target) in enumerate(train):
             optimizer.zero_grad() 
@@ -131,19 +163,20 @@ def train(train, valid):
             infer_time.update(infreTime)
             
             target = torch.squeeze(target, dim=1)
-            loss = criterion(output, target) # float, long , one-hot coding for target?
+            loss = criterion(output, target) # float, long , one-hot coding for target? // add ppt or question 
             losses.update(loss.item())
             loss.backward()
             optimizer.step() 
             
             pixel_acc.update(pixel_accuray(output, target))   # Does this really right?
-            
+            meanIoU.update(meanIU(output, target)) 
             # if i % 50 == 0: 
             #     print(f'======iteration: [{i}], train loss: {(losses.avg):.3f}, train accuracy: {(100.0 * pixel_accuray(output, target)):.2f}%,======') 
         
         print(f'[{epoch + 1} / {epoch_num}], time: {(infer_time.avg):.2f} ms, train loss: {(losses.avg):.3f}, train accuracy: {(100.0 * pixel_acc.avg):.2f}%', end =' ')     
         writer.add_scalar("Loss/train", losses.avg, epoch + 1)
         writer.add_scalar("Accuracy/train", 100.0 * pixel_acc.avg, epoch+1)
+        writer.add_scalar("mIoU/train", meanIoU.avg, epoch+1)
         writer.add_scalar("Time/inference", infer_time.avg, epoch+1)
         
         scheduler.step() 
