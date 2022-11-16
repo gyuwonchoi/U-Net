@@ -17,37 +17,34 @@ from utils  import save_checkpoint, get_dir_name, get_data, get_file_name, get_i
 from torch.utils.tensorboard import SummaryWriter
 from torchsummary import summary
 
-def pixel_accuray(output: torch.Tensor, target: torch.Tensor): # https://github.com/ddamddi/UNet-pytorch/blob/bfb1c47147ddeb8a85b3b50a4af06b3a2082d933/metrics.py#L7
+def pixel_accuracy(output, target): # https://github.com/ddamddi/UNet-pytorch/blob/bfb1c47147ddeb8a85b3b50a4af06b3a2082d933/metrics.py#L7
     with torch.no_grad():
-        output_ = F.softmax(output, dim=1)
-        output_ = torch.argmax(output_, dim=1) # check 
-
-        correct = (output_ == target).int()
+        # output_ = F.softmax(output, dim=1) 
+        output_ = torch.argmax(output, dim=1).long()
+                
+        # correct = (output_ == target).int()
+        correct = torch.eq(output_, target).int()
         accuracy = float(correct.sum()) / float(correct.numel()) 
         
     return accuracy 
 
-def meanIU(output: torch.Tensor, target: torch.Tensor):
+def meanIU(output, target):
     with torch.no_grad():  
-        output_ = F.softmax(output, dim=1)
-        output_ = torch.argmax(output_, dim=1) # check 
-        
+        # output_ = F.softmax(output, dim=1)
+        output_ = torch.argmax(output, dim=1).long() # check
         batch = output.size(0)
 
         IoU = 0.0
         
         for i in range(0, 21): # 0-20
             label = torch.ones((batch, 388, 388), dtype = torch.long).to(device)
-            label = label * i
+            label = (label * i).long()
           
-            output_u = (output_ == label).int()
+            output_u = torch.eq(output_ , label).int()
             # output_inter = output_u * i 
-            
-            target_u = (target == label).int()
+            target_u = torch.eq(target , label).int()
             # target_inter = target_u * i 
-            
             intersection = (target_u * output_u).int()  # output_ == target == label , except zero , count True 
-
             region = output_u.sum() + target_u.sum() - intersection.sum()
             
             if region ==0:
@@ -90,10 +87,10 @@ def validate(model_, validloader, tb_pth_valid, epoch, batch_num_val, lr_):
             loss = criterion(pred, target)
             losses.update(loss.item())
         
-            pixel_acc.update(pixel_accuray(pred, target))
+            pixel_acc.update(pixel_accuracy(pred, target))
             meanIoU.update(meanIU(pred, target))
             
-        print(f'valid loss: {(losses.avg):.3f}, valid accuracy: {(100.0 * pixel_acc.avg):.2f}% mIoU: {(meanIoU.avg):.2f}')     
+        print(f'valid loss: {(losses.avg):.3f}, valid accuracy: {(100.0 * pixel_acc.avg):.2f}% mIoU: {(100.0 * meanIoU.avg):.2f}')     
     ender.record()
     torch.cuda.synchronize()
     infreTime = starter.elapsed_time(ender)
@@ -101,7 +98,7 @@ def validate(model_, validloader, tb_pth_valid, epoch, batch_num_val, lr_):
    
     writer.add_scalar("Loss/valid", losses.avg, epoch + 1)
     writer.add_scalar("Accuracy/valid", 100.0 * pixel_acc.avg, epoch+1) 
-    writer.add_scalar("meanIoU/valid", meanIoU.avg, epoch+1) 
+    writer.add_scalar("meanIoU/valid", 100.0* meanIoU.avg, epoch+1) 
     writer.add_scalar("InferTime/valid", infer_time.avg, epoch+1) 
     
     writer.close()
@@ -128,14 +125,15 @@ def train(train, valid):
         epoch_load = checkpoint['Epoch']
         lr = checkpoint['lr']
         
-    optimizer = optim.SGD(model.parameters(), lr= lr, weight_decay= 0.0001, momentum=0.99)
+    optimizer = optim.SGD(model.parameters(), lr= lr, momentum=0.99)
     criterion = nn.CrossEntropyLoss()
 
     scheduler = optim.lr_scheduler.StepLR(optimizer=optimizer,
-                                          step_size=200,
+                                          step_size=100,
                                           gamma=0.1)
     
     writer = SummaryWriter(tb_pth_train) 
+    starter.record()
     for epoch in range(epoch_num):
         if(arg.mode=='resume' and epoch_num==0):
             epoch = epoch_load
@@ -151,32 +149,31 @@ def train(train, valid):
             # boundary(255) -> background(0)
             # backgroud(0), object(1-20)
             target = target - (target == 255).long() * 255
-            img, target = img.to(device), target.to(device)
+            img, target = img.to(device), target.to(device) # img: 0 ~ 1, target: 0 ~ 20
             
-            starter.record()
-            
-            output = model(img) # output ranges -1 ~ 1
-            
-            ender.record()
-            torch.cuda.synchronize(device)
-            infreTime = starter.elapsed_time(ender)
-            infer_time.update(infreTime)
-            
+            output = model(img) # 0 ~ 1 by sigmoid 
+                        
             target = torch.squeeze(target, dim=1)
-            loss = criterion(output, target) # float, long , one-hot coding for target? // add ppt or question 
+            
+            loss = criterion(output, target) # float, long , one-hot coding for target
             losses.update(loss.item())
             loss.backward()
             optimizer.step() 
             
-            pixel_acc.update(pixel_accuray(output, target))   # Does this really right?
+            pixel_acc.update(pixel_accuracy(output, target))   
             meanIoU.update(meanIU(output, target)) 
-            # if i % 50 == 0: 
-            #     print(f'======iteration: [{i}], train loss: {(losses.avg):.3f}, train accuracy: {(100.0 * pixel_accuray(output, target)):.2f}%,======') 
+            if i % 100 == 0: 
+                print(f'======iteration: [{i}], train loss: {(losses.avg):.3f}, train accuracy: {(100.0 * pixel_accuracy(output, target)):.2f}%,======') 
+        
+        ender.record()
+        torch.cuda.synchronize(device)
+        infreTime = starter.elapsed_time(ender)
+        infer_time.update(infreTime)
         
         print(f'[{epoch + 1} / {epoch_num}], time: {(infer_time.avg):.2f} ms, train loss: {(losses.avg):.3f}, train accuracy: {(100.0 * pixel_acc.avg):.2f}%', end =' ')     
         writer.add_scalar("Loss/train", losses.avg, epoch + 1)
         writer.add_scalar("Accuracy/train", 100.0 * pixel_acc.avg, epoch+1)
-        writer.add_scalar("mIoU/train", meanIoU.avg, epoch+1)
+        writer.add_scalar("mIoU/train", 100.0 * meanIoU.avg, epoch+1)
         writer.add_scalar("Time/inference", infer_time.avg, epoch+1)
         
         scheduler.step() 
